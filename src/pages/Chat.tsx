@@ -132,7 +132,32 @@ function stripInboundMetadata(text: string): string {
 }
 
 function sanitizeMessageText(message: GatewayChatMessage | undefined): string {
-  return stripInboundMetadata(resolveSessionText(message));
+  return stripInboundMetadata(resolveSessionText(message))
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    .replace(/^Pre-compaction memory flush[\s\S]*$/gm, '')
+    .replace(/^IMPORTANT: After completing[^\n]*/gm, '')
+    .replace(/^Co-Authored-By:[^\n]*/gm, '')
+    .replace(/^Read HEARTBEAT\.md if it exists[^\n]*/gm, '')
+    .replace(/^System: \[.*?\] Exec failed[^\n]*/gm, '')
+    .trim();
+}
+
+function isSystemDirective(text: string): boolean {
+  const patterns = [
+    /^Pre-compaction memory flush/,
+    /IMPORTANT:.*address the user's message/,
+    /task tools haven't been used recently/,
+    /<system-reminder>/,
+    /You have exited plan mode/,
+    /You have entered plan mode/,
+    /After completing your current task/,
+    /^Co-Authored-By:/m,
+    /Read HEARTBEAT\.md if it exists/,
+    /HEARTBEAT_OK/,
+    /^System: \[.*\] Exec failed/m,
+    /Follow it strictly\. Do not infer or repeat old tasks/,
+  ];
+  return patterns.some(p => p.test(text));
 }
 
 function mapHistoryMessage(message: GatewayChatMessage, index: number): UiMessage | null {
@@ -239,6 +264,11 @@ function buildSessionMeta(session: GatewaySessionRow, channelsSnapshot: Channels
 
 function sanitizePreviewSnippet(text: string): string {
   const cleaned = stripInboundMetadata(text);
+  
+  // Also strip system directive content
+  if (isSystemDirective(cleaned)) {
+    return '[system]';
+  }
   
   // If empty, return fallback
   if (!cleaned.trim()) {
@@ -358,6 +388,9 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   
   // Message queue for offline/busy states
   const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string; createdAt: number }>>([]);
+  const [developerMode, setDeveloperMode] = useState(() => {
+    return localStorage.getItem('remchat:developerMode') === '1';
+  });
 
   const clientRef = useRef<OpenClawGatewayClient | null>(null);
   const connectedRef = useRef(false);
@@ -1158,6 +1191,21 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                 Offline
               </span>
             )}
+            <button
+              onClick={() => {
+                const next = !developerMode;
+                setDeveloperMode(next);
+                localStorage.setItem('remchat:developerMode', next ? '1' : '0');
+              }}
+              className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                developerMode
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-gray-100 text-gray-400 hover:text-gray-600'
+              }`}
+              title={developerMode ? 'Developer mode ON' : 'Developer mode OFF'}
+            >
+              {'{ }'}
+            </button>
           </div>
 
           {/* Error banner */}
@@ -1183,20 +1231,27 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                   <p className="text-sm text-gray-500">Send a message to start the conversation</p>
                 </div>
               ) : (
-                messages.map((msg) =>
-                  msg.role === 'user' ? (
-                    <UserBubble key={msg.id} msg={msg} />
-                  ) : msg.role === 'assistant' ? (
-                    <AssistantBubble
-                      key={msg.id}
-                      msg={msg}
-                      label={selectedAgent?.label || 'Agent'}
-                      emoji={selectedAgent?.emoji || '✨'}
-                    />
-                  ) : (
-                    <SystemBubble key={msg.id} msg={msg} />
-                  ),
-                )
+                messages
+                  .filter(msg => {
+                    if (developerMode) return true;
+                    if (msg.role === 'system') return false;
+                    if (isSystemDirective(msg.content)) return false;
+                    return true;
+                  })
+                  .map((msg) =>
+                    msg.role === 'user' ? (
+                      <UserBubble key={msg.id} msg={msg} />
+                    ) : msg.role === 'assistant' ? (
+                      <AssistantBubble
+                        key={msg.id}
+                        msg={msg}
+                        label={selectedAgent?.label || 'Agent'}
+                        emoji={selectedAgent?.emoji || '✨'}
+                      />
+                    ) : (
+                      <SystemBubble key={msg.id} msg={msg} />
+                    ),
+                  )
               )}
               {chatBusy && busySessionKey === selectedSessionKey && (
                 <TypingBubble label={selectedAgent?.label || 'Agent'} emoji={selectedAgent?.emoji || '✨'} />
