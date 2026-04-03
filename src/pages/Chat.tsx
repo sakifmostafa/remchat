@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDown,
   ChevronLeft,
   Loader2,
   RefreshCw,
   Search,
   Send,
   Sparkles,
+  X,
 } from 'lucide-react';
 
 import {
@@ -106,6 +108,24 @@ function stripInboundMetadata(text: string): string {
     .replace(/Replied message \(untrusted, for context\):\n```json\n[\s\S]*?\n```\n\n/g, '')
     .replace(/Forwarded message context \(untrusted metadata\):\n```json\n[\s\S]*?\n```\n\n/g, '')
     .replace(/Chat history since last reply \(untrusted, for context\):\n```json\n[\s\S]*?\n```\n\n/g, '')
+    // Remove tool call blocks
+    .replace(/```tool_use[\s\S]*?```/g, '')
+    .replace(/```tool_result[\s\S]*?```/g, '')
+    .replace(/```tool_call[\s\S]*?```/g, '')
+    // Remove JSON objects with tool-related keys
+    .replace(/\{[\s\S]*?"type"\s*:\s*"tool_[^"]*"[\s\S]*?\}/g, '')
+    .replace(/\{[\s\S]*?"tool_use"[\s\S]*?\}/g, '')
+    .replace(/\{[\s\S]*?"tool_result"[\s\S]*?\}/g, '')
+    .replace(/\{[\s\S]*?"tool_call_id"[\s\S]*?\}/g, '')
+    .replace(/\{[\s\S]*?"tool_name"[\s\S]*?\}/g, '')
+    .replace(/\{[\s\S]*?"embedding"[\s\S]*?\}/g, '')
+    // Remove standalone tool/embedding JSON blobs (compact form)
+    .replace(/\{"[^"]*":\s*\{?\s*"[^"]*"\s*:\s*"[^"]*"\s*\}?}/g, '')
+    // Remove embedding/number arrays like [0.123, -0.456, ...] or [[0.1, ...], ...]
+    .replace(/\[\s*-?\d+\.?\d*\s*(,\s*-?\d+\.?\d*\s*)*\]/g, '')
+    // Remove lines that are just numbers or vectors
+    .replace(/^[\s\d.,\-]+$/gm, '')
+    // Remove metadata tags
     .replace(/^\[[^\]]+\]\s*/gm, '')
     .trim();
 }
@@ -117,9 +137,29 @@ function sanitizeMessageText(message: GatewayChatMessage | undefined): string {
 function mapHistoryMessage(message: GatewayChatMessage, index: number): UiMessage | null {
   const role = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'system';
   const content = sanitizeMessageText(message);
+  
+  // Skip empty content
   if (!content) {
     return null;
   }
+  
+  // Skip system messages that look like tool output
+  if (role === 'system') {
+    const toolPatterns = [
+      /tool_use/i,
+      /tool_result/i,
+      /tool_call/i,
+      /embedding/i,
+      /"type"\s*:\s*"tool/i,
+      /"tool_name"/i,
+      /"tool_call_id"/i,
+      /\[-?\d+\.?\d*,?\s*\]/i,  // array of numbers
+    ];
+    if (toolPatterns.some((pattern) => pattern.test(content))) {
+      return null;
+    }
+  }
+  
   return {
     id: `${index}:${message.timestamp ?? Date.now()}`,
     role,
@@ -196,12 +236,47 @@ function buildSessionMeta(session: GatewaySessionRow, channelsSnapshot: Channels
   return parts.join(' • ');
 }
 
+function sanitizePreviewSnippet(text: string): string {
+  const cleaned = stripInboundMetadata(text);
+  
+  // If empty, return fallback
+  if (!cleaned.trim()) {
+    return 'No messages yet';
+  }
+  
+  // Check if the text is mostly JSON-like or just numbers (but not quoted prose)
+  const isMostlyJson = /^\s*[\[{]/.test(cleaned) && /[\]}]\s*$/.test(cleaned);
+  const isJustNumbers = /^[\s\d.,\-]+$/.test(cleaned);
+  
+  if (isMostlyJson || isJustNumbers) {
+    // Try to extract any readable text
+    const readableParts = cleaned
+      .replace(/[\[\]\{\}"]/g, ' ')
+      .replace(/\d+\.\d+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    if (readableParts.length > 10) {
+      return readableParts.slice(0, 80);
+    }
+    
+    return 'No messages yet';
+  }
+  
+  // Truncate to 80 chars
+  if (cleaned.length > 80) {
+    return cleaned.slice(0, 77) + '...';
+  }
+  
+  return cleaned;
+}
+
 function previewSnippet(preview: GatewaySessionPreviewEntry[] | undefined): string {
   const last = preview?.[preview.length - 1];
   if (!last) {
     return 'No messages yet';
   }
-  return stripInboundMetadata(last.text || '').replace(/\s+/g, ' ').trim() || 'No messages yet';
+  return sanitizePreviewSnippet(last.text || '');
 }
 
 function TypingBubble({ emoji }: { label: string; emoji: string }) {
@@ -277,6 +352,10 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   const [sessionPreviewByKey, setSessionPreviewByKey] = useState<Record<string, GatewaySessionPreviewEntry[]>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  
+  // Message queue for offline/busy states
+  const [messageQueue, setMessageQueue] = useState<Array<{ id: string; text: string; createdAt: number }>>([]);
 
   const clientRef = useRef<OpenClawGatewayClient | null>(null);
   const connectedRef = useRef(false);
@@ -284,6 +363,8 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   const streamingRunIdRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatBusyRef = useRef(chatBusy);
+  const isFlushingRef = useRef(false);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) ?? agents[0];
 
@@ -303,7 +384,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
       const title = buildSessionTitle(session, agent).toLowerCase();
       return title.includes(q) || (agent?.name?.toLowerCase() ?? '').includes(q);
     });
-  }, [allSessions, searchQuery, agents, channelsSnapshot]);
+  }, [allSessions, searchQuery, agents]);
 
   const currentSession =
     allSessions.find((session) => session.key === selectedSessionKey) ??
@@ -398,6 +479,89 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   useEffect(() => {
     streamingRunIdRef.current = streamingRunId;
   }, [streamingRunId]);
+
+  useEffect(() => {
+    chatBusyRef.current = chatBusy;
+  }, [chatBusy]);
+
+  // Ref for synchronous queue access inside callbacks
+  const messageQueueRef = useRef(messageQueue);
+  useEffect(() => {
+    messageQueueRef.current = messageQueue;
+  }, [messageQueue]);
+
+  // Flush queue when connected and not busy
+  const flushQueue = useCallback(async () => {
+    if (isFlushingRef.current) return;
+    if (!connectedRef.current || chatBusyRef.current) return;
+
+    const client = clientRef.current;
+    if (!client) return;
+
+    const currentQueue = messageQueueRef.current;
+    if (!currentQueue || currentQueue.length === 0) return;
+
+    const [firstMessage, ...rest] = currentQueue;
+    isFlushingRef.current = true;
+
+    // Update queue immediately (remove first item)
+    messageQueueRef.current = rest;
+    setMessageQueue([...rest]);
+
+    // Add user message to UI immediately
+    const userMessage: UiMessage = {
+      id: firstMessage.id,
+      role: 'user',
+      content: firstMessage.text,
+      timestamp: firstMessage.createdAt,
+    };
+    setMessages((previous) => [...previous, userMessage]);
+    setChatBusy(true);
+    setGatewayError(null);
+
+    const runId = messageId();
+    setStreamingRunId(runId);
+
+    client
+      .request('chat.send', {
+        sessionKey: selectedSessionKeyRef.current,
+        message: firstMessage.text,
+        deliver: false,
+        idempotencyKey: runId,
+      })
+      .then(() => {
+        const previewClient = clientRef.current;
+        if (previewClient && connectedRef.current) {
+          previewClient.request('sessions.preview', {
+            keys: [selectedSessionKeyRef.current],
+            limit: 1,
+            maxChars: 160,
+          }).then((result: unknown) => {
+            const res = result as SessionPreviewResult;
+            const next: Record<string, GatewaySessionPreviewEntry[]> = {};
+            for (const item of res.previews || []) {
+              next[item.key] = item.items || [];
+            }
+            setSessionPreviewByKey((previous) => ({ ...previous, ...next }));
+          }).catch(() => {});
+        }
+      })
+      .catch((error) => {
+        setChatBusy(false);
+        setStreamingRunId(null);
+        setGatewayError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        isFlushingRef.current = false;
+      });
+  }, []);
+
+  // Watch connected and chatBusy to flush queue
+  useEffect(() => {
+    if (connected && !chatBusy) {
+      void flushQueue();
+    }
+  }, [connected, chatBusy, flushQueue]);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -684,7 +848,19 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   const handleSend = async () => {
     const client = clientRef.current;
     const text = inputValue.trim();
-    if (!client || !text || !connected || chatBusy) {
+    if (!client || !text) {
+      return;
+    }
+
+    // Queue message if offline or busy
+    if (!connected || chatBusy) {
+      const queuedMessage = {
+        id: messageId(),
+        text,
+        createdAt: Date.now(),
+      };
+      setMessageQueue((previous) => [...previous, queuedMessage]);
+      setInputValue('');
       return;
     }
 
@@ -857,13 +1033,65 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-semibold text-gray-900 text-[15px] truncate">{currentSessionTitle}</div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-900 text-[15px] truncate">{currentSessionTitle}</span>
+                {/* Agent dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500"
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  {agentDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setAgentDropdownOpen(false)}
+                      />
+                      <div className="absolute left-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-100 z-20 overflow-hidden">
+                        <div className="px-3 py-2 border-b border-gray-100">
+                          <span className="text-xs font-medium text-gray-500">Switch Agent</span>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto py-1">
+                          {agents.map((agent) => (
+                            <button
+                              key={agent.id}
+                              onClick={() => {
+                                setSelectedAgentId(agent.id);
+                                setSelectedSessionKey(buildAgentMainSessionKey(agent.id));
+                                setAgentDropdownOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 transition-colors ${
+                                agent.id === selectedAgentId ? 'bg-blue-50' : ''
+                              }`}
+                            >
+                              <span className="text-lg">{agent.emoji}</span>
+                              <div className="flex-1 text-left min-w-0">
+                                <div className="text-sm font-medium text-gray-900 truncate">{agent.name}</div>
+                                <div className="text-xs text-gray-500 truncate">{agent.description}</div>
+                              </div>
+                              {agent.id === selectedAgentId && (
+                                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
               <div className="text-xs text-gray-500 truncate">{currentSessionMeta}</div>
             </div>
-            {connected && (
+            {connected ? (
               <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
                 <Sparkles className="w-3 h-3" />
                 Available
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                Offline
               </span>
             )}
           </div>
@@ -913,6 +1141,37 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
             </div>
           </div>
 
+          {/* Message queue */}
+          {messageQueue.length > 0 && (
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-100">
+              <div className="mx-auto max-w-3xl">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-medium text-gray-500">
+                    Queued ({messageQueue.length})
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {messageQueue.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="flex items-center gap-2 bg-white rounded-lg px-3 py-1.5 shadow-sm border border-gray-100"
+                    >
+                      <span className="flex-1 text-sm text-gray-700 truncate">
+                        {msg.text.length > 60 ? msg.text.slice(0, 57) + '...' : msg.text}
+                      </span>
+                      <button
+                        onClick={() => setMessageQueue((prev) => prev.filter((m) => m.id !== msg.id))}
+                        className="flex-shrink-0 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Input */}
           <div className="border-t border-gray-200 bg-white px-3 py-3 safe-bottom">
             <div className="mx-auto max-w-3xl">
@@ -934,7 +1193,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                 />
                 <button
                   onClick={() => void handleSend()}
-                  disabled={!inputValue.trim() || !connected || chatBusy}
+                  disabled={!inputValue.trim() || !connected}
                   className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-500 text-white disabled:bg-gray-200 disabled:text-gray-400 transition-colors hover:bg-blue-600"
                 >
                   {chatBusy && streamingRunId ? (
