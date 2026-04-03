@@ -347,6 +347,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
+  const [busySessionKey, setBusySessionKey] = useState<string | null>(null);
   const [streamingRunId, setStreamingRunId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -546,6 +547,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
     };
     setMessages((previous) => [...previous, userMessage]);
     setChatBusy(true);
+    setBusySessionKey(selectedSessionKeyRef.current);
     setGatewayError(null);
 
     const runId = messageId();
@@ -576,7 +578,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
         }
       })
       .catch((error) => {
-        setChatBusy(false);
+        setChatBusy(false); setBusySessionKey(null);
         setStreamingRunId(null);
         setGatewayError(error instanceof Error ? error.message : String(error));
       })
@@ -673,7 +675,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
             if (payload.state === 'final' || payload.state === 'aborted') {
               const finalText = sanitizeMessageText(payload.message);
               setStreamingRunId(null);
-              setChatBusy(false);
+              setChatBusy(false); setBusySessionKey(null);
               setMessages((previous) => {
                 const existingIndex = previous.findIndex((message) => message.id === `run:${payload.runId}`);
                 if (existingIndex >= 0) {
@@ -705,7 +707,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
 
             if (payload.state === 'error') {
               setStreamingRunId(null);
-              setChatBusy(false);
+              setChatBusy(false); setBusySessionKey(null);
               setGatewayError(payload.errorMessage || 'Chat request failed.');
               void refreshSessions();
             }
@@ -734,7 +736,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
             setMessages((previous) => mergeLiveMessage(previous, eventMessage, streamingRunIdRef.current));
             if (normalized.role === 'assistant') {
               setStreamingRunId(null);
-              setChatBusy(false);
+              setChatBusy(false); setBusySessionKey(null);
             }
             void refreshSessions();
             return;
@@ -903,6 +905,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
     setMessages((previous) => [...previous, userMessage]);
     setInputValue('');
     setChatBusy(true);
+    setBusySessionKey(selectedSessionKey);
     setGatewayError(null);
 
     try {
@@ -916,7 +919,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
       });
       void refreshPreviews([selectedSessionKey]);
     } catch (error) {
-      setChatBusy(false);
+      setChatBusy(false); setBusySessionKey(null);
       setStreamingRunId(null);
       setGatewayError(error instanceof Error ? error.message : String(error));
     }
@@ -1195,7 +1198,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                   ),
                 )
               )}
-              {chatBusy && (
+              {chatBusy && busySessionKey === selectedSessionKey && (
                 <TypingBubble label={selectedAgent?.label || 'Agent'} emoji={selectedAgent?.emoji || '✨'} />
               )}
               <div ref={endRef} />
@@ -1257,7 +1260,7 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                   disabled={!inputValue.trim() || !connected}
                   className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-500 text-white disabled:bg-gray-200 disabled:text-gray-400 transition-colors hover:bg-blue-600"
                 >
-                  {chatBusy && streamingRunId ? (
+                  {chatBusy && streamingRunId && busySessionKey === selectedSessionKey ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Send className="w-4 h-4" />
