@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw Agent Hub</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #22c55e;
+      --border: #334155;
+      --danger: #ef4444;
+      --shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.15), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.12), transparent 24%),
+        var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 20px;
+    }
+
+    .hero, .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .hero {
+      padding: 28px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(2rem, 3.5vw, 3.25rem);
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      max-width: 760px;
+      line-height: 1.6;
+      font-size: 1rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 18px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      color: #bfe9ff;
+      font-size: 0.95rem;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent-2);
+      box-shadow: 0 0 16px rgba(34, 197, 94, 0.8);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .agent {
+      padding: 18px;
+      display: grid;
+      gap: 10px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+    }
+
+    .agent h2 {
+      margin: 0;
+      font-size: 1.15rem;
+    }
+
+    .agent p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+      min-height: 3.2em;
+      font-size: 0.95rem;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    button, a.button {
+      appearance: none;
+      border: 0;
+      text-decoration: none;
+      cursor: pointer;
+      padding: 11px 14px;
+      border-radius: 14px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button:hover, a.button:hover { transform: translateY(-1px); }
+
+    .primary {
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      color: white;
+    }
+
+    .secondary {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .footer {
+      padding: 22px 24px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 0.95rem;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 8px;
+      padding: 2px 6px;
+      color: #dbeafe;
+    }
+
+    .warn {
+      color: #fecaca;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>OpenClaw Agent Hub</h1>
+      <p class="lead">
+        This LAN-only launcher opens the built-in OpenClaw control chat with the correct gateway
+        token and jumps straight into the main session for the agent you choose.
+      </p>
+      <div class="status">
+        <span class="dot"></span>
+        <span>Target gateway: <code>wss://192.168.2.142:5173/openclaw</code></span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="agent">
+        <h2>Rem</h2>
+        <p>Main OpenClaw agent session.</p>
+        <div class="actions">
+          <button class="primary" data-session="agent:main:main">Open Chat</button>
+        </div>
+      </article>
+
+      <article class="agent">
+        <h2>Nyx</h2>
+        <p>Coding and implementation agent.</p>
+        <div class="actions">
+          <button class="primary" data-session="agent:nyx:main">Open Chat</button>
+        </div>
+      </article>
+
+      <article class="agent">
+        <h2>Kai</h2>
+        <p>Analysis and structured-output agent.</p>
+        <div class="actions">
+          <button class="primary" data-session="agent:kai:main">Open Chat</button>
+        </div>
+      </article>
+
+      <article class="agent">
+        <h2>Moh</h2>
+        <p>General-purpose Anthropic-backed OpenClaw agent.</p>
+        <div class="actions">
+          <button class="primary" data-session="agent:moh:main">Open Chat</button>
+        </div>
+      </article>
+
+    </section>
+
+    <section class="card footer">
+      <div class="actions">
+        <button class="secondary" data-session="agent:main:main" data-tab="agents">Open Agents View</button>
+        <button class="secondary" data-session="agent:main:main" data-tab="chat">Open Default Chat</button>
+      </div>
+      <p>
+        The OpenClaw control UI itself provides the in-chat agent switcher. Once it opens, you can
+        change agents from the chat header and move between sessions without coming back here.
+      </p>
+      <p class="warn">
+        This launcher passes the gateway token and session directly into the proxied OpenClaw UI,
+        then OpenClaw strips them from the URL after loading.
+      </p>
+    </section>
+  </div>
+
+  <script>
+    const gatewayToken = "232d921aefa2eeacc060715a37ab95ce4de2cce63eea3c5126454182cec7799b";
+
+    function getGatewayUrl() {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${protocol}//${window.location.host}/openclaw`;
+    }
+
+    function launch(sessionKey, tab) {
+      const gatewayUrl = getGatewayUrl();
+      const target = new URL(`/openclaw/${tab || "chat"}`, window.location.origin);
+      if (sessionKey) {
+        target.searchParams.set("session", sessionKey);
+      }
+      const hash = new URLSearchParams();
+      hash.set("token", gatewayToken);
+      hash.set("gatewayUrl", gatewayUrl);
+      target.hash = hash.toString();
+      window.location.href = target.toString();
+    }
+
+    document.querySelectorAll("[data-session]").forEach((button) => {
+      button.addEventListener("click", () => {
+        launch(button.getAttribute("data-session"), button.getAttribute("data-tab") || "chat");
+      });
+    });
+  </script>
+</body>
+</html>

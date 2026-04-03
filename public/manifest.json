@@ -1,0 +1,13 @@
+{
+  "name": "Rem Chat",
+  "short_name": "Rem",
+  "description": "Chat with your OpenClaw agents",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#ffffff",
+  "orientation": "any",
+  "icons": [
+    {"src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml"}
+  ]
+}
