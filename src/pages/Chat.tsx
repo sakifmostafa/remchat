@@ -374,17 +374,45 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
     [sessions],
   );
 
-  // Search filter
-  const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return allSessions;
+  // Group sessions by agent for contact-style left sidebar
+  const agentContacts = useMemo(() => {
+    const byAgent = new Map<string, GatewaySessionRow[]>();
+    for (const session of allSessions) {
+      const agentId = resolveAgentIdFromSessionKey(session.key) || 'unknown';
+      const list = byAgent.get(agentId) || [];
+      list.push(session);
+      byAgent.set(agentId, list);
+    }
+    // Build contact rows: one per agent, sorted by most recent session activity
+    return agents
+      .map((agent) => {
+        const agentSessions = byAgent.get(agent.id) || [];
+        const latestSession = agentSessions[0] || null;
+        const mainKey = buildAgentMainSessionKey(agent.id);
+        const previewKey = latestSession?.key || mainKey;
+        const preview = sessionPreviewByKey[previewKey];
+        const snippet = preview?.[0]?.text ? previewSnippet(preview) : 'No messages yet';
+        const updatedAt = latestSession?.updatedAt || null;
+        return { agent, sessions: agentSessions, latestSession, snippet, updatedAt, mainKey };
+      })
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  }, [allSessions, agents, sessionPreviewByKey]);
+
+  // Search filter (searches agent names)
+  const filteredContacts = useMemo(() => {
+    if (!searchQuery.trim()) return agentContacts;
     const q = searchQuery.toLowerCase();
-    return allSessions.filter((session) => {
-      const agentId = resolveAgentIdFromSessionKey(session.key);
-      const agent = agents.find((a) => a.id === agentId);
-      const title = buildSessionTitle(session, agent).toLowerCase();
-      return title.includes(q) || (agent?.name?.toLowerCase() ?? '').includes(q);
-    });
-  }, [allSessions, searchQuery, agents]);
+    return agentContacts.filter(
+      (c) => c.agent.name.toLowerCase().includes(q) || c.agent.label.toLowerCase().includes(q),
+    );
+  }, [agentContacts, searchQuery]);
+
+  // Sessions for the currently selected agent (for the header dropdown)
+  const currentAgentSessions = useMemo(() => {
+    return allSessions.filter(
+      (s) => resolveAgentIdFromSessionKey(s.key) === selectedAgentId,
+    );
+  }, [allSessions, selectedAgentId]);
 
   const currentSession =
     allSessions.find((session) => session.key === selectedSessionKey) ??
@@ -949,24 +977,19 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
             </div>
           </div>
 
-          {/* Session list */}
+          {/* Agent contact list — one row per agent */}
           <div className="flex-1 overflow-y-auto">
-            {filteredSessions.map((session) => {
-              const agentId = resolveAgentIdFromSessionKey(session.key);
-              const agent = agents.find((a) => a.id === agentId);
-              const preview = sessionPreviewByKey[session.key];
-              const isActive = session.key === selectedSessionKey;
-              const title = buildSessionTitle(session, agent);
-              const meta = buildSessionMeta(session, channelsSnapshot);
-              const snippet = preview?.[0]?.text ? previewSnippet(preview) : meta || 'No messages yet';
-              const time = session.updatedAt ? formatInboxTimestamp(session.updatedAt) : '';
+            {filteredContacts.map((contact) => {
+              const isActive = contact.agent.id === selectedAgentId;
+              const time = contact.updatedAt ? formatInboxTimestamp(contact.updatedAt) : '';
+              const sessionCount = contact.sessions.length;
 
               return (
                 <button
-                  key={session.key}
+                  key={contact.agent.id}
                   onClick={() => {
-                    setSelectedSessionKey(session.key);
-                    if (agentId) setSelectedAgentId(agentId);
+                    setSelectedAgentId(contact.agent.id);
+                    setSelectedSessionKey(contact.mainKey);
                     setLeftPanelOpen(false);
                   }}
                   className={`w-full flex items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-gray-50 ${
@@ -978,26 +1001,33 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                     className="w-12 h-12 rounded-full flex items-center justify-center text-xl flex-shrink-0"
                     style={{ background: isActive ? '#EBF5FF' : '#F3F4F6' }}
                   >
-                    {agent?.avatarUrl ? (
-                      <img src={agent.avatarUrl} className="w-12 h-12 rounded-full object-cover" alt={agent.label} />
+                    {contact.agent.avatarUrl ? (
+                      <img src={contact.agent.avatarUrl} className="w-12 h-12 rounded-full object-cover" alt={contact.agent.label} />
                     ) : (
-                      agent?.emoji || '💬'
+                      contact.agent.emoji || '💬'
                     )}
                   </div>
                   {/* Body */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-[15px] text-gray-900 truncate">{title}</span>
+                      <span className="font-semibold text-[15px] text-gray-900 truncate">{contact.agent.name}</span>
                       <span className="text-xs text-gray-400 flex-shrink-0 ml-2 tabular-nums">{time}</span>
                     </div>
-                    <p className="text-[13px] text-gray-500 truncate mt-0.5">{snippet}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <p className="text-[13px] text-gray-500 truncate flex-1">{contact.snippet}</p>
+                      {sessionCount > 1 && (
+                        <span className="text-[11px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                          {sessionCount}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </button>
               );
             })}
-            {filteredSessions.length === 0 && (
+            {filteredContacts.length === 0 && (
               <div className="px-4 py-8 text-center text-sm text-gray-400">
-                {searchQuery ? 'No matching conversations' : 'No conversations yet'}
+                {searchQuery ? 'No matching agents' : 'No agents yet'}
               </div>
             )}
           </div>
@@ -1035,52 +1065,63 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-gray-900 text-[15px] truncate">{currentSessionTitle}</span>
-                {/* Agent dropdown */}
-                <div className="relative">
-                  <button
-                    onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500"
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </button>
-                  {agentDropdownOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setAgentDropdownOpen(false)}
-                      />
-                      <div className="absolute left-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-100 z-20 overflow-hidden">
-                        <div className="px-3 py-2 border-b border-gray-100">
-                          <span className="text-xs font-medium text-gray-500">Switch Agent</span>
+                {/* Sessions dropdown — switch between this agent's sessions */}
+                {currentAgentSessions.length > 1 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-gray-100 transition-colors text-gray-500"
+                      title={`${currentAgentSessions.length} sessions`}
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      <span className="text-[11px] tabular-nums">{currentAgentSessions.length}</span>
+                    </button>
+                    {agentDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setAgentDropdownOpen(false)}
+                        />
+                        <div className="absolute left-0 top-full mt-1 w-72 bg-white rounded-xl shadow-lg border border-gray-100 z-20 overflow-hidden">
+                          <div className="px-3 py-2 border-b border-gray-100">
+                            <span className="text-xs font-medium text-gray-500">
+                              {selectedAgent?.name || 'Agent'} Sessions
+                            </span>
+                          </div>
+                          <div className="max-h-64 overflow-y-auto py-1">
+                            {currentAgentSessions.map((session) => {
+                              const isActive = session.key === selectedSessionKey;
+                              const title = buildSessionTitle(session, selectedAgent);
+                              const meta = buildSessionMeta(session, channelsSnapshot);
+                              const time = session.updatedAt ? formatInboxTimestamp(session.updatedAt) : '';
+                              return (
+                                <button
+                                  key={session.key}
+                                  onClick={() => {
+                                    setSelectedSessionKey(session.key);
+                                    setAgentDropdownOpen(false);
+                                  }}
+                                  className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 transition-colors ${
+                                    isActive ? 'bg-blue-50' : ''
+                                  }`}
+                                >
+                                  <div className="flex-1 text-left min-w-0">
+                                    <div className="text-sm font-medium text-gray-900 truncate">{title}</div>
+                                    <div className="text-xs text-gray-400 truncate">{meta}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <span className="text-[11px] text-gray-400 tabular-nums">{time}</span>
+                                    {isActive && <span className="w-2 h-2 rounded-full bg-blue-500" />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="max-h-64 overflow-y-auto py-1">
-                          {agents.map((agent) => (
-                            <button
-                              key={agent.id}
-                              onClick={() => {
-                                setSelectedAgentId(agent.id);
-                                setSelectedSessionKey(buildAgentMainSessionKey(agent.id));
-                                setAgentDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-50 transition-colors ${
-                                agent.id === selectedAgentId ? 'bg-blue-50' : ''
-                              }`}
-                            >
-                              <span className="text-lg">{agent.emoji}</span>
-                              <div className="flex-1 text-left min-w-0">
-                                <div className="text-sm font-medium text-gray-900 truncate">{agent.name}</div>
-                                <div className="text-xs text-gray-500 truncate">{agent.description}</div>
-                              </div>
-                              {agent.id === selectedAgentId && (
-                                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="text-xs text-gray-500 truncate">{currentSessionMeta}</div>
             </div>
