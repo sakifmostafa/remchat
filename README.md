@@ -14,7 +14,7 @@ src/
   App.tsx                       # Router: /chat (standalone) + /admin/* (embedded)
   main.tsx                      # Entry point + service worker registration
   pages/
-    Chat.tsx                    # Main 2-panel messaging UI (conversation list + thread)
+    Chat.tsx                    # Main 2-panel messaging UI (agent contacts + thread)
     Dashboard.tsx, Agents.tsx   # Admin pages (behind /admin/ route)
     ...
   components/
@@ -40,9 +40,34 @@ Dockerfile                      # Multi-stage: npm build -> nginx serving
 
 The main interface is a 2-panel Telegram-style layout:
 
-- **Left panel:** Unified conversation list across all agents. Search, connection status,
-  session previews with timestamps. Responsive: slides in on mobile, always visible on desktop.
+- **Left panel:** Agent contact list (one row per agent, not per session). Shows agent
+  emoji/avatar, name, latest message preview, timestamp, and session count badge.
+  Search filters by agent name. "+" button creates a new session for the selected agent.
+  Responsive: slides in on mobile, always visible on desktop.
 - **Right panel:** Active chat thread with message bubbles, agent header, input bar.
+  Session switcher dropdown in the header lets you switch between that agent's sessions.
+
+### Message sanitization
+
+Messages are filtered before display to remove non-human content:
+- `stripInboundMetadata()` strips inbound metadata blocks, tool call JSON (`tool_use`,
+  `tool_result`, `tool_call_id`), embedding arrays, and raw number vectors.
+- `sanitizePreviewSnippet()` further cleans preview text for the left sidebar,
+  truncating to 80 chars and replacing JSON/number-only content with fallback text.
+- `mapHistoryMessage()` skips system messages that contain tool-related patterns.
+
+### Message queue
+
+When the gateway is offline or the agent is busy, messages are queued instead of lost:
+- Queue UI appears above the input bar showing "Queued (N)" with message previews
+  and remove buttons.
+- `flushQueue()` drains items one at a time as each completes.
+- Auto-flushes when connection restores or the agent finishes responding.
+
+### Typing indicator scoping
+
+The typing bubble and send button spinner are scoped to the session that is actually
+busy (`busySessionKey`). Switching to another agent/session will not show the indicator.
 
 ### Key state flow:
 1. Boot: load `/openclaw-config.json` -> create WebSocket client -> handshake with gateway
@@ -73,7 +98,6 @@ npm run dev
 
 # Production build
 npm run build
-# dist/ is volume-mounted into rem-admin container — changes are live immediately
 
 # Type check
 npx tsc --noEmit
@@ -84,24 +108,32 @@ npx tsc --noEmit
 The `rem-admin` Docker container (nginx) serves the built `dist/` directory:
 
 - **Container:** `rem-admin` on `192.168.2.142:5173`
-- **Compose:** defined in `/home/mrremking/Rem/docker-compose.yml` (admin service)
+- **Network:** `rem_rem_internal`
 - **Build context:** `/home/mrremking/remchat`
-- **Volume mount:** `/home/mrremking/remchat/dist:/usr/share/nginx/html:rw`
 - **Config generation:** Container entrypoint `40-openclaw-config.sh` writes `openclaw-config.json`
   using env vars `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_UI_PASSWORD`
 
-### After editing source:
+### Full rebuild and deploy:
 ```bash
-cd /home/mrremking/remchat && npm run build
-# Container picks up changes immediately (volume-mounted dist)
+cd /home/mrremking/remchat
+npm run build
+docker build -t rem-admin .
+docker stop rem-admin && docker rm rem-admin
+docker run -d \
+  --name rem-admin \
+  --restart unless-stopped \
+  --network rem_rem_internal \
+  --add-host host.docker.internal:host-gateway \
+  -p 192.168.2.142:5173:80 \
+  -e "OPENCLAW_UI_PASSWORD=<password>" \
+  -e "OPENCLAW_GATEWAY_TOKEN=<token>" \
+  -e "OPENCLAW_GATEWAY_URL=ws://192.168.2.142:5173/openclaw" \
+  rem-admin
 ```
 
-### After rebuilding the container:
-```bash
-cd /home/mrremking/Rem && docker compose up -d admin
-# Re-run entrypoint to regenerate openclaw-config.json:
-docker exec rem-admin sh /docker-entrypoint.d/40-openclaw-config.sh
-```
+Note: `docker restart` does NOT pick up new images. You must `docker rm` + `docker run`
+to use a freshly built image. The `--add-host host.docker.internal:host-gateway` flag
+is required for nginx to resolve the gateway upstream.
 
 ## Routes
 
@@ -117,7 +149,7 @@ docker exec rem-admin sh /docker-entrypoint.d/40-openclaw-config.sh
 
 - This directory (`/home/mrremking/remchat`) is the source of truth.
 - Use Tailwind classes exclusively (no custom CSS except index.css animations).
-- Keep Chat.tsx focused — extract new components to `src/components/`.
-- After changes, always run `npm run build` to deploy.
+- Keep Chat.tsx focused — extract new components to `src/components/` when it grows.
+- After changes, always `npm run build` + rebuild Docker image + recreate container to deploy.
 - Do not edit files in `dist/` directly — they are overwritten by builds.
 - `public/openclaw-config.json` is a build-time copy; the container regenerates it at startup.
