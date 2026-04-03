@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -954,6 +955,14 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                 {connected ? 'Connected' : 'Offline'}
               </span>
               <button
+                onClick={() => void startNewChat(selectedAgentId)}
+                disabled={!connected || creatingSession}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                title="New chat"
+              >
+                {creatingSession ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              </button>
+              <button
                 onClick={() => void refreshSessions()}
                 className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
                 title="Refresh"
@@ -1083,10 +1092,21 @@ export const Chat: React.FC<ChatProps> = ({ standalone = false }) => {
                           onClick={() => setAgentDropdownOpen(false)}
                         />
                         <div className="absolute left-0 top-full mt-1 w-72 bg-white rounded-xl shadow-lg border border-gray-100 z-20 overflow-hidden">
-                          <div className="px-3 py-2 border-b border-gray-100">
+                          <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
                             <span className="text-xs font-medium text-gray-500">
                               {selectedAgent?.name || 'Agent'} Sessions
                             </span>
+                            <button
+                              onClick={() => {
+                                setAgentDropdownOpen(false);
+                                void startNewChat(selectedAgentId);
+                              }}
+                              disabled={!connected || creatingSession}
+                              className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-600 disabled:opacity-40"
+                            >
+                              <Plus className="w-3 h-3" />
+                              New
+                            </button>
                           </div>
                           <div className="max-h-64 overflow-y-auto py-1">
                             {currentAgentSessions.map((session) => {
