@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   ChevronDown,
   ChevronLeft,
@@ -327,11 +328,48 @@ function TypingBubble({ emoji }: { label: string; emoji: string }) {
   );
 }
 
+function TapToCopyCode({ children, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
+  const [copied, setCopied] = React.useState(false);
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleClick = () => {
+    const text = typeof children === 'string' ? children : (children as any)?.toString?.() ?? '';
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  };
+  React.useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
+  return (
+    <code
+      {...props}
+      onClick={handleClick}
+      onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
+      className="chat-inline-code"
+      title="Tap to copy"
+      role="button"
+      tabIndex={0}
+    >
+      {children}
+      {copied && <span className="chat-copied-badge">Copied!</span>}
+    </code>
+  );
+}
+
+const markdownCodeComponents = {
+  code({ className, children, node, ...props }: { className?: string; children?: React.ReactNode; node?: any } & Record<string, any>) {
+    const isBlock = /language-/.test(className || '') || node?.parentNode?.tagName === 'pre' || node?.parent?.tagName === 'pre';
+    if (isBlock) { return <code className={className} {...props}>{children}</code>; }
+    return <TapToCopyCode {...props}>{children}</TapToCopyCode>;
+  }
+};
+
 function UserBubble({ msg }: { msg: UiMessage }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[86%] overflow-hidden rounded-[28px] rounded-br-lg bg-[#0A84FF] px-4 py-3 text-sm text-white shadow-soft sm:max-w-[82%]">
-        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content}</div>
+        <div className="chat-markdown chat-markdown-user break-words [overflow-wrap:anywhere]"><ReactMarkdown components={markdownCodeComponents}>{msg.content || ' '}</ReactMarkdown></div>
         <div className="mt-1.5 text-right text-[11px] text-white/75">{formatTimestamp(msg.timestamp)}</div>
       </div>
     </div>
@@ -345,7 +383,7 @@ function AssistantBubble({ msg, emoji }: { msg: UiMessage; label: string; emoji:
         <span className="text-sm">{emoji || '✦'}</span>
       </div>
       <div className="max-w-[90%] overflow-hidden rounded-[28px] rounded-bl-lg bg-white px-4 py-3 text-sm text-text-primary shadow-soft sm:max-w-[86%]">
-        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg.content || '…'}</div>
+        <div className="chat-markdown break-words [overflow-wrap:anywhere]"><ReactMarkdown components={markdownCodeComponents}>{msg.content || '…'}</ReactMarkdown></div>
         <div className="mt-1.5 flex items-center gap-2 text-[11px] text-text-muted">
           <span>{formatTimestamp(msg.timestamp)}</span>
           {msg.streaming ? <span className="animate-pulse">typing</span> : null}
