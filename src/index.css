@@ -215,9 +215,21 @@ body {
 .chat-markdown em {
   font-style: italic;
 }
-.chat-markdown ul, .chat-markdown ol {
+.chat-markdown ul {
   margin: 0.35em 0;
   padding-left: 1.4em;
+  list-style-type: disc;
+}
+.chat-markdown ol {
+  margin: 0.35em 0;
+  padding-left: 1.4em;
+  list-style-type: decimal;
+}
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+.chat-markdown ul ul ul {
+  list-style-type: square;
 }
 .chat-markdown li {
   margin: 0.15em 0;
